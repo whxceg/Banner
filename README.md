@@ -26,7 +26,7 @@ allprojects {
 
 ```groovy
 dependencies {
-    implementation 'com.github.whxceg:Banner:0.0.1'
+    implementation 'com.github.whxceg:Banner:0.0.2'
 }
 ```
 
