@@ -2,12 +2,11 @@ package com.sam.lib.banner.sample;
 
 import android.os.Bundle;
 import android.widget.ImageView;
-import android.widget.TextView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.bumptech.glide.Glide;
-import com.sam.lib.sample.Banner;
+import com.sam.lib.banner.Banner;
 
 import java.util.ArrayList;
 import java.util.List;

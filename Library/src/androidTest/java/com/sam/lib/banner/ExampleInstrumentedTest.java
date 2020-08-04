@@ -1,4 +1,4 @@
-package com.sam.lib.sample;
+package com.sam.lib.banner;
 
 import android.content.Context;
 
