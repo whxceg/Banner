@@ -24,7 +24,6 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.PagerSnapHelper
 import androidx.recyclerview.widget.RecyclerView
-import java.util.*
 
 open class Banner<T> @JvmOverloads constructor(
     context: Context,
@@ -45,7 +44,7 @@ open class Banner<T> @JvmOverloads constructor(
     private var mRecyclerView: RecyclerView? = null
     private var mLinearLayout: LinearLayout? = null
 
-    private var mBannerAdapter: BannerAdapter? = null
+    private var mBannerAdapter: WrapBannerAdapter? = null
 
     private val mHandler = Handler()
 
@@ -53,9 +52,7 @@ open class Banner<T> @JvmOverloads constructor(
     private var mIsIndicatorShow: Boolean = false
     private var mNestedEnabled: Boolean = false
 
-    internal var mFilter = IntentFilter()
-
-    private val mData = ArrayList<T>()
+    private var mFilter = IntentFilter()
 
     private var mOnItemPickListener: OnItemPickListener<T>? = null
 
@@ -120,13 +117,11 @@ open class Banner<T> @JvmOverloads constructor(
     interface OnItemClickListener<T> {
 
         fun onItemClick(position: Int, item: T)
-
     }
 
     interface OnItemPickListener<T> {
 
         fun onItemPick(position: Int, item: T)
-
     }
 
     interface OnItemBindListener<T> {
@@ -151,7 +146,7 @@ open class Banner<T> @JvmOverloads constructor(
         mIndicatorSize = attributes.getDimensionPixelSize(R.styleable.Banner_indicator_size, 0)//指示器大小 最小2dp
         mIndicatorSpace = attributes.getDimensionPixelSize(R.styleable.Banner_indicator_space, dp2px(4))//指示器之间的距离
         mIndicatorMargin = attributes.getDimensionPixelSize(R.styleable.Banner_indicator_margin, dp2px(8))//距离上下左右间距
-        mBannerItemResourceId = attributes.getResourceId(R.styleable.Banner_banner_item_layout, 0)//自定义轮播布局Id
+        mBannerItemResourceId = attributes.getResourceId(R.styleable.Banner_banner_item_layout, R.layout.lib_banner_imageview)//自定义轮播布局Id
 
         mIndicatorGainDrawable = if (gainDrawable == null) {
             getDefaultDrawable(DEFAULT_GAIN_COLOR)
@@ -191,7 +186,7 @@ open class Banner<T> @JvmOverloads constructor(
         mFilter.addAction(BannerAction.ACTION_STOP)
 
         PagerSnapHelper().attachToRecyclerView(mRecyclerView)
-        mBannerAdapter = BannerAdapter()
+        mBannerAdapter = WrapBannerAdapter(SimpleBannerAdapter(this))
         mRecyclerView!!.adapter = mBannerAdapter
         mRecyclerView!!.overScrollMode = View.OVER_SCROLL_NEVER
         mRecyclerView!!.isNestedScrollingEnabled = mNestedEnabled
@@ -266,19 +261,23 @@ open class Banner<T> @JvmOverloads constructor(
     }
 
     fun getCurrentIndex(): Int {
-        return if (mData.isNullOrEmpty()) -1 else mCurrentIndex % mData.size
+        val size = mBannerAdapter?.getWrappedAdapter()?.getItemCount() ?: 0
+        return if (size == 0) -1 else mCurrentIndex % size
     }
 
     fun getCurrentItem(): T? {
-        return if (mData.isNullOrEmpty()) null else mData[getCurrentIndex()]
+        val size = mBannerAdapter?.getWrappedAdapter()?.getItemCount() ?: 0
+        return if (size > 0) mBannerAdapter?.getWrappedAdapter()?.getItem(size) else null
     }
 
     private fun createIndicators() {
-        if (mLinearLayout != null) {
+        mLinearLayout?.run {
+            removeAllViews()
+            visibility = View.GONE
             if (mIsIndicatorShow && mIsNotSingleData) {
-                mLinearLayout!!.removeAllViews()
-                mLinearLayout!!.visibility = View.VISIBLE
-                for (i: Int in 0 until mData.size) {
+                visibility = View.VISIBLE
+                val size = mBannerAdapter?.getWrappedAdapter()?.getItemCount() ?: 0
+                for (i in 0 until size) {
                     val img = AppCompatImageView(context)
                     val lp = LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -294,27 +293,26 @@ open class Banner<T> @JvmOverloads constructor(
                         img.minimumHeight = dp2px(2)
                     }
                     img.setImageDrawable(if (i == 0) mIndicatorGainDrawable else mIndicatorMissDrawable)
-                    mLinearLayout!!.addView(img, lp)
+                    addView(img, lp)
                 }
-            } else {
-                mLinearLayout!!.removeAllViews()
-                mLinearLayout!!.visibility = View.GONE
             }
         }
     }
 
     private fun switchIndicator() {
-        if (mData.size > 0) {
-            val position = mCurrentIndex % mData.size
-
-            if (mIsIndicatorShow && mLinearLayout != null && mLinearLayout!!.childCount > 0) {
-                for (i in 0 until mLinearLayout!!.childCount) {
-                    (mLinearLayout!!.getChildAt(i) as AppCompatImageView).setImageDrawable(if (i == position) mIndicatorGainDrawable else mIndicatorMissDrawable)
+        mBannerAdapter?.mWrappedAdapter?.run {
+            if (getItemCount() > 0) {
+                val position = mCurrentIndex % getItemCount()
+                val data = getItem(position)
+                if (mIsIndicatorShow && mLinearLayout != null && mLinearLayout!!.childCount > 0) {
+                    for (i in 0 until mLinearLayout!!.childCount) {
+                        (mLinearLayout!!.getChildAt(i) as AppCompatImageView).setImageDrawable(if (i == position) mIndicatorGainDrawable else mIndicatorMissDrawable)
+                    }
                 }
-            }
 
-            if (mOnItemPickListener != null) {
-                mOnItemPickListener!!.onItemPick(position, mData[position])
+                if (mOnItemPickListener != null) {
+                    mOnItemPickListener!!.onItemPick(position, data)
+                }
             }
         }
     }
@@ -360,26 +358,42 @@ open class Banner<T> @JvmOverloads constructor(
 
     var mIsNotSingleData = false
 
-    fun setBannerData(data: List<T>?) {
+    fun setBannerData(data: List<T>?, onItemBindListener: OnItemBindListener<T>) {
+        mOnItemBindListener = onItemBindListener
         setPlaying(false)
-        if (!data.isNullOrEmpty()) {
-            if (data.size > 1) {
-                mData.clear()
-                mData.addAll(data)
-                mIsNotSingleData = true
-                mCurrentIndex = mData.size * 100000
-                mBannerAdapter!!.notifyDataSetChanged()
-                mRecyclerView!!.scrollToPosition(mCurrentIndex)
-                createIndicators()
-                setPlaying(true)
-            } else {
-                mData.clear()
-                mCurrentIndex = 0
-                mData.addAll(data)
-                mIsNotSingleData = false
-                mBannerAdapter!!.notifyDataSetChanged()
-                createIndicators()
-            }
+        val innerAdapter = SimpleBannerAdapter<T>(this)
+        innerAdapter.setData(data)
+        if (innerAdapter.getItemCount() > 1) {
+            mIsNotSingleData = true
+            mCurrentIndex = innerAdapter.getItemCount() * 10
+            mBannerAdapter?.setWrappedAdapter(innerAdapter)
+            mRecyclerView?.scrollToPosition(mCurrentIndex)
+            createIndicators()
+            setPlaying(true)
+        } else {
+            mCurrentIndex = 0
+            mIsNotSingleData = false
+            mBannerAdapter?.setWrappedAdapter(innerAdapter)
+            mBannerAdapter?.notifyDataSetChanged()
+            createIndicators()
+        }
+    }
+
+    fun setBannerData(innerAdapter: BaseBannerAdapter<T>) {
+        setPlaying(false)
+        if(innerAdapter.getItemCount()>1){
+            mIsNotSingleData = true
+            mCurrentIndex = innerAdapter.getItemCount() * 10
+            mBannerAdapter?.setWrappedAdapter(innerAdapter)
+            mRecyclerView?.scrollToPosition(mCurrentIndex)
+            createIndicators()
+            setPlaying(true)
+        }else{
+            mCurrentIndex = 0
+            mIsNotSingleData = false
+            mBannerAdapter?.setWrappedAdapter(innerAdapter)
+            mBannerAdapter?.notifyDataSetChanged()
+            createIndicators()
         }
     }
 
@@ -390,53 +404,19 @@ open class Banner<T> @JvmOverloads constructor(
         }
     }
 
-    private inner class BannerAdapter : RecyclerView.Adapter<BannerViewHolder>() {
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BannerViewHolder {
-            if (mBannerItemResourceId != 0) {
-                val itemView = LayoutInflater.from(parent.context)
-                    .inflate(mBannerItemResourceId, parent, false)
-                itemView.setOnClickListener {
-                    mOnItemClickListener?.onItemClick(
-                        mCurrentIndex % mData.size,
-                        mData[mCurrentIndex % mData.size]
-                    )
-                }
-                return BannerViewHolder(itemView);
-
-            }
-            val imageView = ImageView(parent.context)
-            val params = RecyclerView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-            imageView.scaleType = ImageView.ScaleType.CENTER_CROP
-            imageView.id = R.id.banner_image_view_id
-            imageView.layoutParams = params
-            imageView.setOnClickListener {
-                mOnItemClickListener?.onItemClick(
-                    mCurrentIndex % mData.size,
-                    mData[mCurrentIndex % mData.size]
-                )
-
-            }
-            return BannerViewHolder(imageView)
-        }
-
-        override fun onBindViewHolder(holder: BannerViewHolder, position: Int) {
-            val pos = position % mData.size
-            val data = mData[position % mData.size]
-            mOnItemBindListener?.onItemBind(pos, data, holder.mImageView, holder)
-
-        }
-
-        override fun getItemCount(): Int {
-            return if (mData.size < 2) mData.size else Integer.MAX_VALUE
-        }
-
+    interface BaseBannerAdapter<T> {
+        fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BannerViewHolder?
+        fun getItemCount(): Int
+        fun onBindViewHolder(holder: BannerViewHolder, position: Int)
+        fun getItem(position: Int): T
+        fun getItemViewType(position: Int):Int
     }
 
-    class BannerViewHolder internal constructor(itemView: View) :
+    fun dispatchItemBindListener(position: Int, item: T, view: ImageView, holder: BannerViewHolder){
+        mOnItemBindListener?.onItemBind(position,item,view , holder)
+    }
+
+    open class BannerViewHolder constructor(itemView: View) :
         RecyclerView.ViewHolder(itemView) {
 
         private val mViews = SparseArray<View>()
@@ -450,9 +430,78 @@ open class Banner<T> @JvmOverloads constructor(
             return view as T
         }
 
-        internal var mImageView: ImageView = itemView.findViewById(R.id.banner_image_view_id)
+        val imageView: ImageView = itemView.findViewById(R.id.banner_image_view_id)
 
     }
+
+
+
+    class SimpleBannerAdapter<T>(var mBanner: Banner<T>) : BaseBannerAdapter<T> {
+
+        private var mData: List<T>? = null
+
+        fun setData(data: List<T>?) {
+            mData = data
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BannerViewHolder? = null
+
+        override fun getItemCount() = mData?.size ?: 0
+
+        override fun getItem(position: Int) = mData!![position]
+
+        override fun onBindViewHolder(holder: BannerViewHolder, position: Int) {
+            mBanner.dispatchItemBindListener(position, mData!![position], holder.imageView, holder)
+        }
+
+        override fun getItemViewType(position: Int) = 0
+
+    }
+
+    inner class WrapBannerAdapter(var mWrappedAdapter: BaseBannerAdapter<T>) :
+        RecyclerView.Adapter<BannerViewHolder>() {
+
+        fun setWrappedAdapter(adapter: BaseBannerAdapter<T>) {
+            this.mWrappedAdapter = adapter
+            notifyDataSetChanged()
+        }
+
+        fun getWrappedAdapter() = mWrappedAdapter
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): BannerViewHolder {
+
+            var holder = mWrappedAdapter.onCreateViewHolder(parent, viewType)
+            if (holder == null) {
+                val inflater = LayoutInflater.from(parent.context)
+                val itemView = inflater.inflate(mBannerItemResourceId, parent, false)
+                holder = BannerViewHolder(itemView)
+            }
+            holder.itemView.setOnClickListener {
+                val position = mCurrentIndex % mWrappedAdapter.getItemCount()
+                val data = mWrappedAdapter.getItem(position)
+                mOnItemClickListener?.onItemClick(position, data)
+
+            }
+            return holder
+        }
+
+        override fun getItemCount(): Int {
+            val size = mWrappedAdapter.getItemCount()
+            return if (size < 2) size else Integer.MAX_VALUE
+        }
+
+        override fun onBindViewHolder(holder: BannerViewHolder, position: Int) {
+            val pos = position % mWrappedAdapter.getItemCount()
+            mWrappedAdapter.onBindViewHolder(holder, pos)
+        }
+
+        override fun getItemViewType(position: Int): Int {
+            val pos = position % mWrappedAdapter.getItemCount()
+            return mWrappedAdapter.getItemViewType(pos)
+        }
+
+    }
+
 
     fun setPlaying(playing: Boolean) {
         synchronized(mLock) {
@@ -485,10 +534,6 @@ open class Banner<T> @JvmOverloads constructor(
 
     fun setOnItemPickListener(listener: OnItemPickListener<T>) {
         mOnItemPickListener = listener
-    }
-
-    fun setOnItemBindListener(listener: OnItemBindListener<T>) {
-        mOnItemBindListener = listener
     }
 
     private fun dp2px(dp: Int): Int {
